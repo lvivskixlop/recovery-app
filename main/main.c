@@ -6,9 +6,9 @@
 #include "freertos/task.h"
 
 // Module Interfaces (We will write these next)
-#include "storage.h"
+#include "storage_manager.h"
 #include "wifi_manager.h"
-#include "server.h"
+#include "server_manager.h"
 
 static const char *TAG = "MAIN";
 

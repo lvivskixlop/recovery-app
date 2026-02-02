@@ -1,5 +1,5 @@
 #include "wifi_manager.h"
-#include "storage.h"
+#include "storage_manager.h"
 #include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
@@ -12,7 +12,7 @@ static const char *TAG = "WIFI_MGR";
 // --- Constants ---
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT BIT1
-#define MAX_STA_RETRIES 3
+#define MAX_STA_RETRIES 5
 
 // --- Static State ---
 static EventGroupHandle_t s_wifi_event_group;
@@ -94,12 +94,14 @@ esp_err_t wifi_manager_try_connect_sta(bool *out_connected)
     char ssid[33] = {0};
     char pass[65] = {0};
 
-    // Check return of storage (Rule 7)
     if (storage_get_wifi_creds(ssid, sizeof(ssid), pass, sizeof(pass)) != ESP_OK)
     {
         ESP_LOGW(TAG, "Storage empty or failed.");
         return ESP_OK; // Logic success, but connection false
     }
+
+    ESP_LOGW(TAG, "SSID: %s", ssid);
+    ESP_LOGW(TAG, "Password: %s", pass);
 
     // 2. Create Netif (Check Pointer)
     esp_netif_t *netif = esp_netif_create_default_wifi_sta();

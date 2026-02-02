@@ -1,0 +1,15 @@
+menu "WiFi Manager Configuration"
+
+    config WIFI_SSID
+        string "WiFi SSID"
+        default "ssid"
+        help
+            The SSID (network name) for the WiFi station.
+
+    config WIFI_PASSWORD
+        string "WiFi Password"
+        default "password"
+        help
+            The password for the WiFi station.
+
+endmenu

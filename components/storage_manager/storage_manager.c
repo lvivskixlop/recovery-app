@@ -1,4 +1,4 @@
-#include "storage.h"
+#include "storage_manager.h"
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "esp_log.h"
@@ -8,9 +8,9 @@ static const char *TAG = "STORAGE";
 
 // --- Configuration Constants ---
 // These MUST match your Main App's configuration
-#define NVS_NAMESPACE "storage"
-#define KEY_WIFI_SSID "ssid"
-#define KEY_WIFI_PASS "password"
+#define NVS_NAMESPACE "app_settings"
+#define KEY_WIFI_SSID CONFIG_WIFI_SSID
+#define KEY_WIFI_PASS CONFIG_WIFI_PASSWORD
 
 esp_err_t storage_init(void)
 {
