@@ -7,7 +7,7 @@
 #include "esp_event.h"
 #include "esp_log.h"
 
-static const char *TAG = "WIFI_MGR";
+static const char *TAG = "WIFI_MANAGER";
 
 // --- Constants ---
 #define WIFI_CONNECTED_BIT BIT0
@@ -33,6 +33,9 @@ static void sta_event_handler(void *arg, esp_event_base_t event_base,
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
+        wifi_event_sta_disconnected_t *d = (wifi_event_sta_disconnected_t *)event_data;
+        ESP_LOGE(TAG, "Disconnect Reason: %d", d->reason);
+
         if (s_retry_num < MAX_STA_RETRIES)
         {
             s_retry_num++;
@@ -100,8 +103,8 @@ esp_err_t wifi_manager_try_connect_sta(bool *out_connected)
         return ESP_OK; // Logic success, but connection false
     }
 
-    ESP_LOGW(TAG, "SSID: %s", ssid);
-    ESP_LOGW(TAG, "Password: %s", pass);
+    ESP_LOGW(TAG, "SSID: '%s' (Len: %d)", ssid, strlen(ssid));
+    ESP_LOGW(TAG, "Password: '%s' (Len: %d)", pass, strlen(pass));
 
     // 2. Create Netif (Check Pointer)
     esp_netif_t *netif = esp_netif_create_default_wifi_sta();
