@@ -6,149 +6,98 @@
 
 static const char *TAG = "STORAGE";
 
-// --- Configuration Constants ---
-// These MUST match your Main App's configuration
 #define NVS_NAMESPACE "app_settings"
 #define KEY_WIFI_SSID CONFIG_WIFI_SSID
 #define KEY_WIFI_PASS CONFIG_WIFI_PASSWORD
 
+// Helper to check error and break the do-while loop
+#define CHECK_BREAK(x)         \
+    if ((err = (x)) != ESP_OK) \
+    break
+
+/* --- Private Helper --- */
+/* Reads a string key safely, enforcing buffer limits */
+static esp_err_t nvs_read_str_helper(nvs_handle_t handle, const char *key, char *buf, size_t max_len)
+{
+    size_t required_size = 0;
+    esp_err_t err;
+
+    // 1. Get size
+    err = nvs_get_str(handle, key, NULL, &required_size);
+    if (err != ESP_OK)
+        return err;
+
+    // 2. Validate buffer
+    if (required_size > max_len)
+        return ESP_ERR_NVS_INVALID_LENGTH;
+
+    // 3. Read data
+    return nvs_get_str(handle, key, buf, &max_len);
+}
+
+/* --- Public API --- */
+
 esp_err_t storage_init(void)
 {
-    // 1. Try to Init
     esp_err_t err = nvs_flash_init();
 
-    // 2. Check for Corruption / No Space
     if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND)
     {
-        ESP_LOGW(TAG, "NVS Corrupt or Full. Erasing...");
-
-        // 3. Self-Heal: Erase
-        err = nvs_flash_erase();
-        if (err != ESP_OK)
-        {
-            ESP_LOGE(TAG, "Failed to erase NVS: %s", esp_err_to_name(err));
-            return err;
-        }
-
-        // 4. Retry Init
+        ESP_LOGW(TAG, "NVS Recovery: Erasing...");
+        ESP_ERROR_CHECK(nvs_flash_erase());
         err = nvs_flash_init();
     }
-
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Failed to init NVS: %s", esp_err_to_name(err));
-    }
-
     return err;
 }
 
-esp_err_t storage_get_wifi_creds(char *ssid_buf, size_t ssid_buf_len,
-                                 char *pass_buf, size_t pass_buf_len)
+esp_err_t storage_get_wifi_creds(char *ssid_buf, size_t ssid_len,
+                                 char *pass_buf, size_t pass_len)
 {
-    // Rule 7: Check params validity
-    if (ssid_buf == NULL || pass_buf == NULL || ssid_buf_len == 0 || pass_buf_len == 0)
-    {
+    if (!ssid_buf || !pass_buf || ssid_len == 0 || pass_len == 0)
         return ESP_ERR_INVALID_ARG;
-    }
 
-    nvs_handle_t my_handle;
-    esp_err_t err;
-
-    // 1. Open
-    err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &my_handle);
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
     if (err != ESP_OK)
         return err;
 
-    // 2. Read SSID
-    // We use a temporary size variable because nvs_get_str updates it with actual length
-    size_t required_size = 0;
-
-    // 2a. Check if key exists and get length
-    err = nvs_get_str(my_handle, KEY_WIFI_SSID, NULL, &required_size);
-    if (err != ESP_OK)
+    // "Do-While-0" block for safe resource cleanup (No Goto)
+    do
     {
-        nvs_close(my_handle);
-        return err; // Likely ESP_ERR_NVS_NOT_FOUND
-    }
+        // 1. Read SSID (Critical)
+        CHECK_BREAK(nvs_read_str_helper(handle, KEY_WIFI_SSID, ssid_buf, ssid_len));
 
-    // 2b. Check buffer safety
-    if (required_size > ssid_buf_len)
-    {
-        nvs_close(my_handle);
-        return ESP_ERR_NVS_INVALID_LENGTH;
-    }
-
-    // 2c. Actually read
-    err = nvs_get_str(my_handle, KEY_WIFI_SSID, ssid_buf, &ssid_buf_len);
-    if (err != ESP_OK)
-    {
-        nvs_close(my_handle);
-        return err;
-    }
-
-    // 3. Read Password (Optional? No, we treat as pair)
-    required_size = 0;
-    err = nvs_get_str(my_handle, KEY_WIFI_PASS, NULL, &required_size);
-    if (err == ESP_OK)
-    {
-        if (required_size <= pass_buf_len)
+        // 2. Read Password (Optional - treat missing as empty)
+        err = nvs_read_str_helper(handle, KEY_WIFI_PASS, pass_buf, pass_len);
+        if (err == ESP_ERR_NVS_NOT_FOUND)
         {
-            err = nvs_get_str(my_handle, KEY_WIFI_PASS, pass_buf, &pass_buf_len);
+            pass_buf[0] = '\0';
+            err = ESP_OK; // Mask error
         }
-        else
-        {
-            err = ESP_ERR_NVS_INVALID_LENGTH;
-        }
-    }
+    } while (0);
 
-    // Note: If Password is missing (ESP_ERR_NVS_NOT_FOUND), we might still want to
-    // return Success if open networks are allowed.
-    // For this robust implementation, we treat a missing password as an empty string.
-    if (err == ESP_ERR_NVS_NOT_FOUND)
-    {
-        pass_buf[0] = '\0'; // Empty string
-        err = ESP_OK;       // Mask the error
-    }
-
-    // 4. Close
-    nvs_close(my_handle);
+    // Cleanup always happens here
+    nvs_close(handle);
     return err;
 }
 
 esp_err_t storage_set_wifi_creds(const char *ssid, const char *pass)
 {
-    if (ssid == NULL || pass == NULL)
+    if (!ssid || !pass)
         return ESP_ERR_INVALID_ARG;
 
-    nvs_handle_t my_handle;
-    esp_err_t err;
-
-    // 1. Open (Read/Write)
-    err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &my_handle);
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
     if (err != ESP_OK)
         return err;
 
-    // 2. Write SSID
-    err = nvs_set_str(my_handle, KEY_WIFI_SSID, ssid);
-    if (err != ESP_OK)
+    do
     {
-        nvs_close(my_handle);
-        return err;
-    }
+        CHECK_BREAK(nvs_set_str(handle, KEY_WIFI_SSID, ssid));
+        CHECK_BREAK(nvs_set_str(handle, KEY_WIFI_PASS, pass));
+        CHECK_BREAK(nvs_commit(handle));
+    } while (0);
 
-    // 3. Write Password
-    err = nvs_set_str(my_handle, KEY_WIFI_PASS, pass);
-    if (err != ESP_OK)
-    {
-        nvs_close(my_handle);
-        return err;
-    }
-
-    // 4. Commit (Flash writes happen here)
-    err = nvs_commit(my_handle);
-
-    // 5. Close
-    nvs_close(my_handle);
-
+    nvs_close(handle);
     return err;
 }

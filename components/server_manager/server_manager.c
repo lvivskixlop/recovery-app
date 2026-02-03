@@ -10,212 +10,122 @@
 #include "freertos/task.h"
 
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
-
 static const char *TAG = "SERVER";
 
-/* --- HELPER: Restart Task --- */
-/* We can't restart inside the HTTP handler because the response
-   wouldn't finish sending. We spawn this tiny task to wait 2s then reboot. */
+// Macro to simplify error exits
+#define FAIL_HTTP(req, msg)       \
+    do                            \
+    {                             \
+        ESP_LOGE(TAG, "%s", msg); \
+        httpd_resp_send_500(req); \
+        return ESP_FAIL;          \
+    } while (0)
+
+/* --- HELPER: Restart --- */
 static void restart_task(void *param)
 {
     vTaskDelay(pdMS_TO_TICKS(2000));
     esp_restart();
 }
-
 static void trigger_restart(void)
 {
     xTaskCreate(restart_task, "restart_task", 2048, NULL, 5, NULL);
 }
 
-/* --- HANDLER: POST /settings --- */
-/* Expects JSON: {"ssid": "MyWiFi", "password": "123"} */
+/* --- HANDLERS --- */
+
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
-    char buf[200]; // Rule 2: Fixed bound on input size
-    int ret, remaining = req->content_len;
-
-    // 1. Safety Check: Body too large?
-    if (remaining >= sizeof(buf))
-    {
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
-
-    // 2. Read Data
-    ret = httpd_req_recv(req, buf, remaining);
+    char buf[200];
+    int ret = httpd_req_recv(req, buf, MIN(req->content_len, sizeof(buf) - 1));
     if (ret <= 0)
-    {
         return ESP_FAIL;
-    }
-    buf[ret] = '\0'; // Null-terminate
+    buf[ret] = '\0';
 
-    // 3. Parse JSON
     cJSON *root = cJSON_Parse(buf);
-    if (root == NULL)
-    {
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
+    if (!root)
+        FAIL_HTTP(req, "JSON Parse Error");
 
-    cJSON *ssid_item = cJSON_GetObjectItem(root, "ssid");
-    cJSON *pass_item = cJSON_GetObjectItem(root, "password");
+    cJSON *ssid = cJSON_GetObjectItem(root, "ssid");
+    cJSON *pass = cJSON_GetObjectItem(root, "password");
 
-    // 4. Validate & Save
     esp_err_t err = ESP_FAIL;
-    if (cJSON_IsString(ssid_item) && cJSON_IsString(pass_item))
+    if (cJSON_IsString(ssid) && cJSON_IsString(pass))
     {
-        err = storage_set_wifi_creds(ssid_item->valuestring, pass_item->valuestring);
+        err = storage_set_wifi_creds(ssid->valuestring, pass->valuestring);
     }
-
-    cJSON_Delete(root); // Clean up JSON object
+    cJSON_Delete(root);
 
     if (err == ESP_OK)
     {
         httpd_resp_sendstr(req, "Settings Saved. Rebooting...");
-        ESP_LOGW(TAG, "New settings saved. Rebooting system.");
         trigger_restart();
         return ESP_OK;
     }
-    else
-    {
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
+    FAIL_HTTP(req, "Failed to write Settings");
 }
 
-/* --- HANDLER: POST /ota --- */
-/* Streams binary data directly to the OTA partition */
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
-    char buf[1024]; // 1KB Buffer (Stack)
+    char buf[1024];
+    esp_ota_handle_t handle = 0;
     esp_err_t err;
-    esp_ota_handle_t update_handle = 0;
 
-    // 1. Find the target partition (ota_0)
-    // In our CSV, the factory app runs from 'factory'.
-    // The Update engine automatically looks for the first "app" partition that isn't the running one.
-    // Since we are running 'factory', it should find 'ota_0'.
-    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    const esp_partition_t *part = esp_ota_get_next_update_partition(NULL);
+    if (!part)
+        FAIL_HTTP(req, "No OTA Partition found");
 
-    if (update_partition == NULL)
-    {
-        ESP_LOGE(TAG, "No OTA partition found!");
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
+    if (esp_ota_begin(part, OTA_SIZE_UNKNOWN, &handle) != ESP_OK)
+        FAIL_HTTP(req, "OTA Begin Failed");
 
-    ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%lx",
-             update_partition->subtype, update_partition->address);
-
-    // 2. Begin OTA (Erase flash)
-    // OTA_SIZE_UNKNOWN lets us stream without knowing exact size upfront
-    err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "esp_ota_begin failed (%s)", esp_err_to_name(err));
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
-
-    // 3. The STREAM LOOP (Bucket Brigade)
     int remaining = req->content_len;
-    int received;
-
-    // Rule 2: Loop is bounded by content_len.
-    // If content_len is huge, we trust the user (authenticated via WiFi) won't DoS us.
-    // A watchdog could optionally be fed here.
     while (remaining > 0)
     {
-        // 3a. Receive from Network
-        received = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
-
+        int received = httpd_req_recv(req, buf, MIN(remaining, sizeof(buf)));
         if (received < 0)
         {
-            // Error handling for socket errors
             if (received == HTTPD_SOCK_ERR_TIMEOUT)
-            {
-                continue; // Retry
-            }
-            ESP_LOGE(TAG, "Socket Error");
-            esp_ota_end(update_handle); // Abort
+                continue;
+            esp_ota_end(handle);
             return ESP_FAIL;
         }
-
-        // 3b. Write to Flash
         if (received > 0)
         {
-            err = esp_ota_write(update_handle, buf, received);
-            if (err != ESP_OK)
+            if (esp_ota_write(handle, buf, received) != ESP_OK)
             {
-                ESP_LOGE(TAG, "Flash Write Failed (%s)", esp_err_to_name(err));
-                esp_ota_end(update_handle);
-                httpd_resp_send_500(req);
-                return ESP_FAIL;
+                esp_ota_end(handle);
+                FAIL_HTTP(req, "Flash Write Failed");
             }
             remaining -= received;
         }
     }
 
-    // 4. Finalize & Verify
-    err = esp_ota_end(update_handle);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "OTA End/Validation Failed (%s)", esp_err_to_name(err));
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
+    if (esp_ota_end(handle) != ESP_OK)
+        FAIL_HTTP(req, "OTA Validation Failed");
+    if (esp_ota_set_boot_partition(part) != ESP_OK)
+        FAIL_HTTP(req, "Set Boot Partition Failed");
 
-    // 5. Activate New Partition
-    err = esp_ota_set_boot_partition(update_partition);
-    if (err != ESP_OK)
-    {
-        ESP_LOGE(TAG, "Set Boot Partition Failed (%s)", esp_err_to_name(err));
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
-
-    // 6. Success Response
     httpd_resp_sendstr(req, "Update Success. Rebooting...");
-    ESP_LOGI(TAG, "OTA Complete. Rebooting...");
-
     trigger_restart();
     return ESP_OK;
 }
 
-/* --- Public Init Function --- */
+/* --- INIT --- */
 esp_err_t server_start(void)
 {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
-
-    // Increase stack size! OTA handlers use 1KB buffer + system overhead.
-    // Default is usually 4096, bump to 8192 to be safe.
     config.stack_size = 8192;
 
-    esp_err_t err = httpd_start(&server, &config);
-    if (err != ESP_OK)
-        return err;
+    if (httpd_start(&server, &config) != ESP_OK)
+        return ESP_FAIL;
 
-    // Register OTA
-    httpd_uri_t ota_uri = {
-        .uri = "/ota",
-        .method = HTTP_POST,
-        .handler = ota_post_handler,
-        .user_ctx = NULL};
-    err = httpd_register_uri_handler(server, &ota_uri);
-    if (err != ESP_OK)
-        return err;
+    httpd_uri_t ota_uri = {.uri = "/ota", .method = HTTP_POST, .handler = ota_post_handler};
+    httpd_register_uri_handler(server, &ota_uri);
 
-    // Register Settings
-    httpd_uri_t settings_uri = {
-        .uri = "/settings",
-        .method = HTTP_POST,
-        .handler = settings_post_handler,
-        .user_ctx = NULL};
-    err = httpd_register_uri_handler(server, &settings_uri);
-    if (err != ESP_OK)
-        return err;
+    httpd_uri_t settings_uri = {.uri = "/settings", .method = HTTP_POST, .handler = settings_post_handler};
+    httpd_register_uri_handler(server, &settings_uri);
 
-    ESP_LOGI(TAG, "Web Server Started.");
+    ESP_LOGI(TAG, "Server Started.");
     return ESP_OK;
 }
