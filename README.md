@@ -1,53 +1,114 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-C61 | ESP32-H2 | ESP32-H21 | ESP32-H4 | ESP32-P4 | ESP32-S2 | ESP32-S3 | Linux |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | --------- | -------- | --------- | -------- | -------- | -------- | -------- | ----- |
+# ESP32 Fail-Safe Recovery Firmware
 
-# Hello World Example
+A fail-safe factory firmware for ESP32. This application resides in the `factory` partition and provides a robust safety net for IoT devices. Its sole purpose is to rescue the device from bad updates, corrupted credentials, or boot loops by providing a reliable HTTP interface for OTA updates and settings management.
 
-Starts a FreeRTOS task to print "Hello World".
+## ✨ Features
 
-(See the README.md file in the upper level 'examples' directory for more information about examples.)
+* **Robust State Machine:** Automatically falls back to Access Point mode (`ESP_RECOVERY`) if the configured WiFi is unavailable.
+* **Self-Healing NVS:** Detects and repairs corrupted NVS partitions automatically on boot.
+* **Streamed OTA Updates:** Supports uploading large firmware binaries (`.bin`) via HTTP POST, regardless of RAM limitations.
+* **JSON Settings API:** Simple REST API to update WiFi credentials without reflashing.
 
-## How to use example
+## 💾 Partition Table
 
-Follow detailed instructions provided specifically for this example.
+**Crucial:** Both your Recovery App and Main App **MUST** use the exact same `partitions.csv` to ensure memory layout compatibility.
 
-Select the instructions depending on Espressif chip installed on your development board:
-
-- [ESP32 Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/stable/get-started/index.html)
-- [ESP32-S2 Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s2/get-started/index.html)
-
-
-## Example folder contents
-
-The project **hello_world** contains one source file in C language [hello_world_main.c](main/hello_world_main.c). The file is located in folder [main](main).
-
-ESP-IDF projects are built using CMake. The project build configuration is contained in `CMakeLists.txt` files that provide set of directives and instructions describing the project's source files and targets (executable, library, or both).
-
-Below is short explanation of remaining files in the project folder.
-
-```
-├── CMakeLists.txt
-├── pytest_hello_world.py      Python script used for automated testing
-├── main
-│   ├── CMakeLists.txt
-│   └── hello_world_main.c
-└── README.md                  This is the file you are currently reading
+```csv
+# Name, Type, SubType, Offset, Size, Flags
+nvs, data, nvs, , 0x4000,
+otadata, data, ota, , 0x2000,
+phy_init, data, phy, , 0x1000,
+factory, app, factory, , 1M,
+ota_0, app, ota_0, , 2900K,
 ```
 
-For more information on structure and contents of ESP-IDF projects, please refer to Section [Build System](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-guides/build-system.html) of the ESP-IDF Programming Guide.
+## 📡 API Reference
 
-## Troubleshooting
+### 1. Update WiFi Credentials
 
-* Program upload failure
+**Endpoint:** `POST /settings`
 
-    * Hardware connection is not correct: run `idf.py -p PORT monitor`, and reboot your board to see if there are any output logs.
-    * The baud rate for downloading is too high: lower your baud rate in the `menuconfig` menu, and try again.
+**Content-Type:** `application/json`
 
-## Technical support and feedback
+Updates the stored WiFi credentials. The device will reboot and attempt to connect immediately.
 
-Please use the following feedback channels:
+**Request Body:**
 
-* For technical queries, go to the [esp32.com](https://esp32.com/) forum
-* For a feature request or bug report, create a [GitHub issue](https://github.com/espressif/esp-idf/issues)
+```json
+{
+  "ssid": "MyHomeNetwork",
+  "password": "SuperSecretPassword"
+}
+```
 
-We will get back to you as soon as possible.
+### 2. Upload New Firmware (OTA)
+
+**Endpoint:** `POST /ota`
+
+**Content-Type:** `application/octet-stream` (Binary Body)
+
+Streams a compiled `.bin` file directly to the `ota_0` partition. Upon success, the device reboots into the new Main App.
+
+**Example (cURL):**
+
+```bash
+curl -X POST --data-binary @my_main_app.bin http://<ESP_IP>/ota
+```
+
+## 📘 Guidelines for the "Main App"
+
+To fully utilize this recovery architecture, your Main App must implement specific "Lifecycle Safety" features.
+
+### 1. NVS Synchronization (Source of Truth)
+
+The Recovery App relies on specific NVS keys (`ssid`, `password`) in the `app_settings` namespace. Your Main App must sync its config to these keys so the Recovery App can connect to the same network.
+
+**Required Logic in Main App Init:**
+
+1. Read Main App config (e.g., from Kconfig or internal storage).
+2. Read NVS keys `ssid` and `password`.
+3. If they differ, overwrite NVS with Main App config.
+
+### 2. Boot Loop Protection (The "Three Strikes" Rule)
+
+To prevent a buggy update from permanently bricking the device (by looping forever in a crashing Main App), add this logic to the very top of `app_main()`:
+
+```c
+static RTC_NOINIT_ATTR int boot_crash_count;
+
+void app_main(void) {
+  // 1. Check Crash History
+  if (esp_reset_reason() != ESP_RST_POWERON) {
+    boot_crash_count++;
+  } else {
+    boot_crash_count = 0;
+  }
+
+  // 2. Emergency Fallback
+  if (boot_crash_count >= 3) {
+    // Switch boot partition back to FACTORY (Recovery App)
+    const esp_partition_t *factory = esp_partition_find_first(
+        ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
+    esp_ota_set_boot_partition(factory);
+    esp_restart();
+  }
+
+  // ... Rest of initialization ...
+
+  // 3. Reset Counter (after successful init)
+  boot_crash_count = 0;
+}
+```
+
+### 3. Manual Recovery Trigger
+
+Allow users to manually force the device into Recovery Mode (e.g., via a physical button hold or a specific API call).
+
+```c
+void reboot_to_recovery(void) {
+  const esp_partition_t *factory = esp_partition_find_first(
+      ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_APP_FACTORY, NULL);
+  esp_ota_set_boot_partition(factory);
+  esp_restart();
+}
+```
