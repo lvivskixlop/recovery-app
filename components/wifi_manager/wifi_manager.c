@@ -28,15 +28,26 @@ static const char *TAG = "WIFI_MANAGER";
 static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 
-/* --- Event Handler (Unchanged logic, compacted) --- */
+/* --- Event Handler --- */
 static void sta_event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
+    if (base == NULL)
+    {
+        ESP_LOGE(TAG, "CRITICAL: Event base is NULL. Stack corruption?");
+        return;
+    }
+
     if (base == WIFI_EVENT && id == WIFI_EVENT_STA_START)
     {
         esp_wifi_connect();
     }
     else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
     {
+        if (s_retry_num < 0)
+        {
+            ESP_LOGE(TAG, "ASSERT FAIL: Negative retry count detected!");
+            s_retry_num = 0;
+        }
         if (s_retry_num < MAX_STA_RETRIES)
         {
             s_retry_num++;
