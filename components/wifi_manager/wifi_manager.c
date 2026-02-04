@@ -109,7 +109,7 @@ esp_err_t wifi_manager_try_connect_sta(bool *out_connected)
     esp_event_handler_instance_t instance_any_id = NULL;
     esp_event_handler_instance_t instance_got_ip = NULL;
 
-    // 3. Execution Block (Safe Cleanup Pattern)
+    // 3. Execution Block
     do
     {
         // Register Handlers

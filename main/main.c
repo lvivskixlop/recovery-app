@@ -4,8 +4,6 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-
-// Module Interfaces (We will write these next)
 #include "storage_manager.h"
 #include "wifi_manager.h"
 #include "server_manager.h"
@@ -98,10 +96,6 @@ static void system_loop(void)
 
     while (true)
     {
-        // We can add a simple health check here later.
-        // For now, it just keeps the task alive and yields CPU.
         vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
-
-        // Optional: Watchdog pet could go here.
     }
 }

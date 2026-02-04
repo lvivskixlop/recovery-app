@@ -11,7 +11,7 @@
 
 #define MAX_OTA_TIMEOUT_RETRIES 5
 #define MIN(a, b) (((a) < (b)) ? (a) : (b))
-static const char *TAG = "SERVER";
+static const char *TAG = "SERVER_MANAGER";
 
 // Macro to simplify error exits
 #define FAIL_HTTP(req, msg)       \
@@ -154,7 +154,7 @@ static esp_err_t ota_post_handler(httpd_req_t *req)
 
     if (remaining != 0)
     {
-        // This implies we exited the loop but didn't finish?
+        // This implies we exited the loop but didn't finish
         esp_ota_end(handle);
         FAIL_HTTP(req, "OTA Stream Mismatch");
     }

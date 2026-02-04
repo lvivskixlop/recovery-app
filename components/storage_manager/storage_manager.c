@@ -4,7 +4,7 @@
 #include "esp_log.h"
 #include <string.h>
 
-static const char *TAG = "STORAGE";
+static const char *TAG = "STORAGE_MANAGER";
 
 #define NVS_NAMESPACE "app_settings"
 #define KEY_WIFI_SSID CONFIG_WIFI_SSID
@@ -61,18 +61,18 @@ esp_err_t storage_get_wifi_creds(char *ssid_buf, size_t ssid_len,
     if (err != ESP_OK)
         return err;
 
-    // "Do-While-0" block for safe resource cleanup (No Goto)
+    // "Do-While-0" block for safe resource cleanup
     do
     {
-        // 1. Read SSID (Critical)
+        // 1. Read SSID
         CHECK_BREAK(nvs_read_str_helper(handle, KEY_WIFI_SSID, ssid_buf, ssid_len));
 
-        // 2. Read Password (Optional - treat missing as empty)
+        // 2. Read Password
         err = nvs_read_str_helper(handle, KEY_WIFI_PASS, pass_buf, pass_len);
         if (err == ESP_ERR_NVS_NOT_FOUND)
         {
             pass_buf[0] = '\0';
-            err = ESP_OK; // Mask error
+            err = ESP_OK;
         }
     } while (0);
 
