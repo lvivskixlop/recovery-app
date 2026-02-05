@@ -1,0 +1,8 @@
+menu "App Configuration"
+    config APP_MASTER_PASSWORD
+        string "Master Password"
+        default "admin123"
+        help
+            The default password for the web interface. 
+            Can be overridden by NVS.
+endmenu

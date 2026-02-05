@@ -1,5 +1,6 @@
 #include "server_manager.h"
 #include "storage_manager.h"
+#include "auth_manager.h"
 #include "esp_http_server.h"
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -37,6 +38,9 @@ static void trigger_restart(void)
 
 static esp_err_t settings_post_handler(httpd_req_t *req)
 {
+    if (auth_guard(req) != ESP_OK)
+        return ESP_OK;
+
     if (req == NULL || req->aux == NULL)
         return ESP_FAIL;
     if (req->content_len <= 0 || req->content_len > 200)
@@ -94,6 +98,9 @@ static esp_err_t settings_post_handler(httpd_req_t *req)
 
 static esp_err_t ota_post_handler(httpd_req_t *req)
 {
+    if (auth_guard(req) != ESP_OK)
+        return ESP_OK;
+
     char buf[1024];
     esp_ota_handle_t handle = 0;
     int timeout_retries = 0; // Guard for infinite timeout loop
@@ -178,6 +185,8 @@ esp_err_t server_start(void)
 
     if (httpd_start(&server, &config) != ESP_OK)
         return ESP_FAIL;
+
+    auth_manager_init(server);
 
     httpd_uri_t ota_uri = {.uri = "/ota", .method = HTTP_POST, .handler = ota_post_handler};
     httpd_register_uri_handler(server, &ota_uri);

@@ -31,3 +31,9 @@ esp_err_t storage_get_wifi_creds(char *ssid_buf, size_t ssid_buf_len,
  * * @return ESP_OK on success.
  */
 esp_err_t storage_set_wifi_creds(const char *ssid, const char *pass);
+
+/**
+ * @brief Reads the Master Password from NVS.
+ * If NVS is empty, it returns the Kconfig default.
+ */
+esp_err_t storage_get_master_password(char *buf, size_t max_len);

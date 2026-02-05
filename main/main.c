@@ -7,6 +7,7 @@
 #include "storage_manager.h"
 #include "wifi_manager.h"
 #include "server_manager.h"
+#include "auth_manager.h"
 
 static const char *TAG = "MAIN";
 

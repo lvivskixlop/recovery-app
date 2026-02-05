@@ -9,6 +9,8 @@ static const char *TAG = "STORAGE_MANAGER";
 #define NVS_NAMESPACE "app_settings"
 #define KEY_WIFI_SSID CONFIG_WIFI_SSID
 #define KEY_WIFI_PASS CONFIG_WIFI_PASSWORD
+#define KEY_MASTER_PASS "master_pass"
+#define DEFAULT_MASTER_PASS CONFIG_APP_MASTER_PASSWORD
 
 // Helper to check error and break the do-while loop
 #define CHECK_BREAK(x)         \
@@ -97,6 +99,37 @@ esp_err_t storage_set_wifi_creds(const char *ssid, const char *pass)
         CHECK_BREAK(nvs_set_str(handle, KEY_WIFI_PASS, pass));
         CHECK_BREAK(nvs_commit(handle));
     } while (0);
+
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t storage_get_master_password(char *buf, size_t max_len)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+
+    // If NVS fails or key missing, fallback to Kconfig immediately
+    if (err != ESP_OK)
+    {
+        strncpy(buf, DEFAULT_MASTER_PASS, max_len);
+        return ESP_OK; // Not an error, just using default
+    }
+
+    // Try to read from NVS
+    size_t required_size = 0;
+    err = nvs_get_str(handle, KEY_MASTER_PASS, NULL, &required_size);
+
+    if (err == ESP_OK && required_size <= max_len)
+    {
+        err = nvs_get_str(handle, KEY_MASTER_PASS, buf, &max_len);
+    }
+    else
+    {
+        // Fallback if key missing or invalid
+        strncpy(buf, DEFAULT_MASTER_PASS, max_len);
+        err = ESP_OK;
+    }
 
     nvs_close(handle);
     return err;
