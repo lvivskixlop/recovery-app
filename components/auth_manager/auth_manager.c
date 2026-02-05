@@ -30,6 +30,8 @@ static void generate_new_session(void)
     }
     s_session_token[SESSION_TOKEN_LEN] = '\0';
     s_last_activity_time = esp_timer_get_time();
+
+    storage_set_session_token(s_session_token);
 }
 
 /* --- PUBLIC API --- */
@@ -144,6 +146,17 @@ static esp_err_t login_post_handler(httpd_req_t *req)
 
 void auth_manager_init(httpd_handle_t server)
 {
+    // We try to fill the RAM cache. If it fails (no key), it stays empty (requires login).
+    if (storage_get_session_token(s_session_token, sizeof(s_session_token)) == ESP_OK)
+    {
+        if (strlen(s_session_token) > 0)
+        {
+            ESP_LOGI(TAG, "Restored active session from NVS.");
+            // Reset activity timer so they have a fresh 30 days from boot
+            s_last_activity_time = esp_timer_get_time();
+        }
+    }
+
     httpd_uri_t login_uri = {
         .uri = "/login",
         .method = HTTP_POST,

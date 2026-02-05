@@ -11,6 +11,7 @@ static const char *TAG = "STORAGE_MANAGER";
 #define KEY_WIFI_PASS CONFIG_WIFI_PASSWORD
 #define KEY_MASTER_PASS "master_pass"
 #define DEFAULT_MASTER_PASS CONFIG_APP_MASTER_PASSWORD
+#define KEY_SESSION_TOKEN "auth_token"
 
 // Helper to check error and break the do-while loop
 #define CHECK_BREAK(x)         \
@@ -130,6 +131,47 @@ esp_err_t storage_get_master_password(char *buf, size_t max_len)
         strncpy(buf, DEFAULT_MASTER_PASS, max_len);
         err = ESP_OK;
     }
+
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t storage_get_session_token(char *buf, size_t max_len)
+{
+    if (!buf || max_len == 0)
+        return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+    if (err != ESP_OK)
+        return err; // If NVS fails, we just won't have a session
+
+    // Use our helper from before (safe read)
+    // Note: If key doesn't exist (ESP_ERR_NVS_NOT_FOUND), buf stays empty.
+    err = nvs_read_str_helper(handle, KEY_SESSION_TOKEN, buf, max_len);
+
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t storage_set_session_token(const char *token)
+{
+    if (!token)
+        return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &handle);
+    if (err != ESP_OK)
+        return err;
+
+    do
+    {
+        // We write the token string
+        if ((err = nvs_set_str(handle, KEY_SESSION_TOKEN, token)) != ESP_OK)
+            break;
+        if ((err = nvs_commit(handle)) != ESP_OK)
+            break;
+    } while (0);
 
     nvs_close(handle);
     return err;

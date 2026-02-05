@@ -37,3 +37,15 @@ esp_err_t storage_set_wifi_creds(const char *ssid, const char *pass);
  * If NVS is empty, it returns the Kconfig default.
  */
 esp_err_t storage_get_master_password(char *buf, size_t max_len);
+
+/**
+ * @brief Reads the persistent session token.
+ * Used to restore the session after a reboot.
+ */
+esp_err_t storage_get_session_token(char *buf, size_t max_len);
+
+/**
+ * @brief Saves the session token to NVS.
+ * Call this only when a NEW login occurs.
+ */
+esp_err_t storage_set_session_token(const char *token);
