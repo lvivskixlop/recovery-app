@@ -4,7 +4,7 @@
 #include "esp_log.h"
 #include <string.h>
 
-static const char *TAG = "STORAGE_MANAGER";
+static const char* TAG = "STORAGE_MANAGER";
 
 #define NVS_NAMESPACE "app_settings"
 #define KEY_WIFI_SSID CONFIG_WIFI_SSID
@@ -20,7 +20,7 @@ static const char *TAG = "STORAGE_MANAGER";
 
 /* --- Private Helper --- */
 /* Reads a string key safely, enforcing buffer limits */
-static esp_err_t nvs_read_str_helper(nvs_handle_t handle, const char *key, char *buf, size_t max_len)
+static esp_err_t nvs_read_str_helper(nvs_handle_t handle, const char* key, char* buf, size_t max_len)
 {
     size_t required_size = 0;
     esp_err_t err;
@@ -53,25 +53,48 @@ esp_err_t storage_init(void)
     return err;
 }
 
-esp_err_t storage_get_wifi_creds(char *ssid_buf, size_t ssid_len,
-                                 char *pass_buf, size_t pass_len)
+esp_err_t storage_get_wifi_creds(char* ssid_buf, size_t ssid_len, char* pass_buf, size_t pass_len)
 {
+    // Catch logic errors in the caller during dev.
+    // These enforce the contract that the caller MUST provide valid buffers.
+    assert(ssid_buf != NULL);
+    assert(pass_buf != NULL);
+    assert(ssid_len > 0);
+    assert(pass_len > 0);
+
     if (!ssid_buf || !pass_buf || ssid_len == 0 || pass_len == 0)
         return ESP_ERR_INVALID_ARG;
 
-    nvs_handle_t handle;
-    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
-    if (err != ESP_OK)
-        return err;
 
-    // "Do-While-0" block for safe resource cleanup
+    // Initialize defaults to empty (Safe initialization)
+    memset(ssid_buf, 0, ssid_len);
+    memset(pass_buf, 0, pass_len);
+
+    esp_err_t err = ESP_OK;
+
+    nvs_handle_t handle;
+    err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
+
+    if (err != ESP_OK)
+    {
+        // Fallback to Kconfig
+        ESP_LOGW("STORAGE", "NVS empty. Using Kconfig defaults.");
+        strncpy(ssid_buf, CONFIG_WIFI_SSID, ssid_len - 1);
+        strncpy(pass_buf, CONFIG_WIFI_PASSWORD, pass_len - 1);
+        return ESP_OK;
+    }
+
     do
     {
+        size_t actual_len = ssid_len;
+
         // 1. Read SSID
-        CHECK_BREAK(nvs_read_str_helper(handle, KEY_WIFI_SSID, ssid_buf, ssid_len));
+        CHECK_BREAK(nvs_get_str(handle, KEY_WIFI_SSID, ssid_buf, &actual_len));
 
         // 2. Read Password
-        err = nvs_read_str_helper(handle, KEY_WIFI_PASS, pass_buf, pass_len);
+        actual_len = pass_len;
+        err = nvs_get_str(handle, KEY_WIFI_PASS, pass_buf, &actual_len);
+
         if (err == ESP_ERR_NVS_NOT_FOUND)
         {
             pass_buf[0] = '\0';
@@ -79,12 +102,21 @@ esp_err_t storage_get_wifi_creds(char *ssid_buf, size_t ssid_len,
         }
     } while (0);
 
-    // Cleanup always happens here
     nvs_close(handle);
+
+    if (err != ESP_OK)
+    {
+        // If NVS read failed mid-way, fallback to Kconfig
+        ESP_LOGW("STORAGE", "NVS read error. Using Kconfig defaults.");
+        strncpy(ssid_buf, CONFIG_WIFI_SSID, ssid_len - 1);
+        strncpy(pass_buf, CONFIG_WIFI_PASSWORD, pass_len - 1);
+        return ESP_OK;
+    }
+
     return err;
 }
 
-esp_err_t storage_set_wifi_creds(const char *ssid, const char *pass)
+esp_err_t storage_set_wifi_creds(const char* ssid, const char* pass)
 {
     if (!ssid || !pass)
         return ESP_ERR_INVALID_ARG;
@@ -105,7 +137,7 @@ esp_err_t storage_set_wifi_creds(const char *ssid, const char *pass)
     return err;
 }
 
-esp_err_t storage_get_master_password(char *buf, size_t max_len)
+esp_err_t storage_get_master_password(char* buf, size_t max_len)
 {
     nvs_handle_t handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &handle);
@@ -136,7 +168,7 @@ esp_err_t storage_get_master_password(char *buf, size_t max_len)
     return err;
 }
 
-esp_err_t storage_get_session_token(char *buf, size_t max_len)
+esp_err_t storage_get_session_token(char* buf, size_t max_len)
 {
     if (!buf || max_len == 0)
         return ESP_ERR_INVALID_ARG;
@@ -154,7 +186,7 @@ esp_err_t storage_get_session_token(char *buf, size_t max_len)
     return err;
 }
 
-esp_err_t storage_set_session_token(const char *token)
+esp_err_t storage_set_session_token(const char* token)
 {
     if (!token)
         return ESP_ERR_INVALID_ARG;
