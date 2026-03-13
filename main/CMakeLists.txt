@@ -4,4 +4,5 @@ idf_component_register(SRCS "main.c"
                             storage_manager
                             wifi_manager
                             server_manager
+                            esp_psram
                             auth_manager)
